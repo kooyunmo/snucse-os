@@ -16,6 +16,7 @@
 #include <linux/blockgroup_lock.h>
 #include <linux/percpu_counter.h>
 #include <linux/rbtree.h>
+#include <linux/gps.h>
 
 /* XXX Here for now... not interested in restructing headers JUST now */
 
@@ -118,7 +119,7 @@ struct ext2_sb_info {
 	struct dax_device *s_daxdev;
 };
 
-static inline spinlock_t *
+	static inline spinlock_t *
 sb_bgl_lock(struct ext2_sb_info *sbi, unsigned int block_group)
 {
 	return bgl_lock_ptr(sbi->s_blockgroup_lock, block_group);
@@ -147,10 +148,10 @@ sb_bgl_lock(struct ext2_sb_info *sbi, unsigned int block_group)
  */
 #ifdef EXT2FS_DEBUG
 #	define ext2_debug(f, a...)	{ \
-					printk ("EXT2-fs DEBUG (%s, %d): %s:", \
-						__FILE__, __LINE__, __func__); \
-				  	printk (f, ## a); \
-					}
+	printk ("EXT2-fs DEBUG (%s, %d): %s:", \
+			__FILE__, __LINE__, __func__); \
+	printk (f, ## a); \
+}
 #else
 #	define ext2_debug(f, a...)	/**/
 #endif
@@ -256,10 +257,10 @@ struct ext2_group_desc
 
 /* Flags that should be inherited by new inodes from their parent. */
 #define EXT2_FL_INHERITED (EXT2_SECRM_FL | EXT2_UNRM_FL | EXT2_COMPR_FL |\
-			   EXT2_SYNC_FL | EXT2_NODUMP_FL |\
-			   EXT2_NOATIME_FL | EXT2_COMPRBLK_FL |\
-			   EXT2_NOCOMP_FL | EXT2_JOURNAL_DATA_FL |\
-			   EXT2_NOTAIL_FL | EXT2_DIRSYNC_FL)
+		EXT2_SYNC_FL | EXT2_NODUMP_FL |\
+		EXT2_NOATIME_FL | EXT2_COMPRBLK_FL |\
+		EXT2_NOCOMP_FL | EXT2_JOURNAL_DATA_FL |\
+		EXT2_NOTAIL_FL | EXT2_DIRSYNC_FL)
 
 /* Flags that are appropriate for regular files (all but dir-specific ones). */
 #define EXT2_REG_FLMASK (~(EXT2_DIRSYNC_FL | EXT2_TOPDIR_FL))
@@ -311,6 +312,7 @@ struct ext2_inode {
 	__le16	i_links_count;	/* Links count */
 	__le32	i_blocks;	/* Blocks count */
 	__le32	i_flags;	/* File flags */
+
 	union {
 		struct {
 			__le32  l_i_reserved1;
@@ -350,7 +352,13 @@ struct ext2_inode {
 			__u16	m_pad1;
 			__u32	m_i_reserved2[2];
 		} masix2;
-	} osd2;				/* OS dependent 2 */
+	} osd2;		/* OS dependent 2 */
+	__u32	i_lat_integer;
+	__u32	i_lat_fractional;
+	__u32	i_lng_integer;
+	__u32	i_lng_fractional;
+	__u32	i_accuracy;
+
 };
 
 #define i_size_high	i_dir_acl
@@ -400,7 +408,7 @@ struct ext2_inode {
 #define clear_opt(o, opt)		o &= ~EXT2_MOUNT_##opt
 #define set_opt(o, opt)			o |= EXT2_MOUNT_##opt
 #define test_opt(sb, opt)		(EXT2_SB(sb)->s_mount_opt & \
-					 EXT2_MOUNT_##opt)
+		EXT2_MOUNT_##opt)
 /*
  * Maximal mount counts between two filesystem checks
  */
@@ -486,7 +494,7 @@ struct ext2_super_block {
 	__u8	s_reserved_char_pad;
 	__u16	s_reserved_word_pad;
 	__le32	s_default_mount_opts;
- 	__le32	s_first_meta_bg; 	/* First metablock block group */
+	__le32	s_first_meta_bg; 	/* First metablock block group */
 	__u32	s_reserved[190];	/* Padding to the end of the block */
 };
 
@@ -555,10 +563,10 @@ struct ext2_super_block {
 
 #define EXT2_FEATURE_COMPAT_SUPP	EXT2_FEATURE_COMPAT_EXT_ATTR
 #define EXT2_FEATURE_INCOMPAT_SUPP	(EXT2_FEATURE_INCOMPAT_FILETYPE| \
-					 EXT2_FEATURE_INCOMPAT_META_BG)
+		EXT2_FEATURE_INCOMPAT_META_BG)
 #define EXT2_FEATURE_RO_COMPAT_SUPP	(EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER| \
-					 EXT2_FEATURE_RO_COMPAT_LARGE_FILE| \
-					 EXT2_FEATURE_RO_COMPAT_BTREE_DIR)
+		EXT2_FEATURE_RO_COMPAT_LARGE_FILE| \
+		EXT2_FEATURE_RO_COMPAT_BTREE_DIR)
 #define EXT2_FEATURE_RO_COMPAT_UNSUPPORTED	~EXT2_FEATURE_RO_COMPAT_SUPP
 #define EXT2_FEATURE_INCOMPAT_UNSUPPORTED	~EXT2_FEATURE_INCOMPAT_SUPP
 
@@ -576,7 +584,7 @@ struct ext2_super_block {
 #define EXT2_DEFM_XATTR_USER	0x0004
 #define EXT2_DEFM_ACL		0x0008
 #define EXT2_DEFM_UID16		0x0010
-    /* Not used by ext2, but reserved for use by ext3 */
+/* Not used by ext2, but reserved for use by ext3 */
 #define EXT3_DEFM_JMODE		0x0060 
 #define EXT3_DEFM_JMODE_DATA	0x0020
 #define EXT3_DEFM_JMODE_ORDERED	0x0040
@@ -631,7 +639,7 @@ enum {
 #define EXT2_DIR_PAD		 	4
 #define EXT2_DIR_ROUND 			(EXT2_DIR_PAD - 1)
 #define EXT2_DIR_REC_LEN(name_len)	(((name_len) + 8 + EXT2_DIR_ROUND) & \
-					 ~EXT2_DIR_ROUND)
+		~EXT2_DIR_ROUND)
 #define EXT2_MAX_REC_LEN		((1<<16)-1)
 
 static inline void verify_offsets(void)
@@ -706,6 +714,12 @@ struct ext2_inode_info {
 #ifdef CONFIG_QUOTA
 	struct dquot *i_dquot[MAXQUOTAS];
 #endif
+			__u32	i_lat_integer;
+			__u32	i_lat_fractional;
+			__u32	i_lng_integer;
+			__u32	i_lng_fractional;
+			__u32	i_accuracy;
+
 };
 
 #ifdef CONFIG_FS_DAX
@@ -741,17 +755,17 @@ extern int ext2_bg_has_super(struct super_block *sb, int group);
 extern unsigned long ext2_bg_num_gdb(struct super_block *sb, int group);
 extern ext2_fsblk_t ext2_new_block(struct inode *, unsigned long, int *);
 extern ext2_fsblk_t ext2_new_blocks(struct inode *, unsigned long,
-				unsigned long *, int *);
+		unsigned long *, int *);
 extern int ext2_data_block_valid(struct ext2_sb_info *sbi, ext2_fsblk_t start_blk,
-				 unsigned int count);
+		unsigned int count);
 extern void ext2_free_blocks (struct inode *, unsigned long,
-			      unsigned long);
+		unsigned long);
 extern unsigned long ext2_count_free_blocks (struct super_block *);
 extern unsigned long ext2_count_dirs (struct super_block *);
 extern void ext2_check_blocks_bitmap (struct super_block *);
 extern struct ext2_group_desc * ext2_get_group_desc(struct super_block * sb,
-						    unsigned int block_group,
-						    struct buffer_head ** bh);
+		unsigned int block_group,
+		struct buffer_head ** bh);
 extern void ext2_discard_reservation (struct inode *);
 extern int ext2_should_retry_alloc(struct super_block *sb, int *retries);
 extern void ext2_init_block_alloc_info(struct inode *);
@@ -782,7 +796,7 @@ extern int ext2_get_block(struct inode *, sector_t, struct buffer_head *, int);
 extern int ext2_setattr (struct dentry *, struct iattr *);
 extern void ext2_set_inode_flags(struct inode *inode);
 extern int ext2_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
-		       u64 start, u64 len);
+		u64 start, u64 len);
 
 /* ioctl.c */
 extern long ext2_ioctl(struct file *, unsigned int, unsigned long);
@@ -793,12 +807,12 @@ struct dentry *ext2_get_parent(struct dentry *child);
 
 /* super.c */
 extern __printf(3, 4)
-void ext2_error(struct super_block *, const char *, const char *, ...);
+	void ext2_error(struct super_block *, const char *, const char *, ...);
 extern __printf(3, 4)
-void ext2_msg(struct super_block *, const char *, const char *, ...);
-extern void ext2_update_dynamic_rev (struct super_block *sb);
-extern void ext2_sync_super(struct super_block *sb, struct ext2_super_block *es,
-			    int wait);
+	void ext2_msg(struct super_block *, const char *, const char *, ...);
+	extern void ext2_update_dynamic_rev (struct super_block *sb);
+	extern void ext2_sync_super(struct super_block *sb, struct ext2_super_block *es,
+			int wait);
 
 /*
  * Inodes and files operations
@@ -809,7 +823,7 @@ extern const struct file_operations ext2_dir_operations;
 
 /* file.c */
 extern int ext2_fsync(struct file *file, loff_t start, loff_t end,
-		      int datasync);
+		int datasync);
 extern const struct inode_operations ext2_file_inode_operations;
 extern const struct file_operations ext2_file_operations;
 
@@ -826,7 +840,13 @@ extern const struct inode_operations ext2_special_inode_operations;
 extern const struct inode_operations ext2_fast_symlink_inode_operations;
 extern const struct inode_operations ext2_symlink_inode_operations;
 
-static inline ext2_fsblk_t
+
+/* gps.c */
+extern int ext2_set_gps_location(struct inode *);
+extern int ext2_get_gps_location(struct inode *, struct gps_location *);
+
+
+	static inline ext2_fsblk_t
 ext2_group_first_block_no(struct super_block *sb, unsigned long group_no)
 {
 	return group_no * (ext2_fsblk_t)EXT2_BLOCKS_PER_GROUP(sb) +

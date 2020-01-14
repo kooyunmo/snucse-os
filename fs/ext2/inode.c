@@ -1461,6 +1461,16 @@ struct inode *ext2_iget (struct super_block *sb, unsigned long ino)
 	ei->i_state = 0;
 	ei->i_block_group = (ino - 1) / EXT2_INODES_PER_GROUP(inode->i_sb);
 	ei->i_dir_start_lookup = 0;
+	
+	/*************************      Added For Proj4      ************************/
+	
+	ei->i_lat_integer = le32_to_cpu(raw_inode->i_lat_integer);
+    ei->i_lat_fractional = le32_to_cpu(raw_inode->i_lat_fractional);
+	ei->i_lng_integer = le32_to_cpu(raw_inode->i_lng_integer);
+	ei->i_lng_fractional = le32_to_cpu(raw_inode->i_lng_fractional);
+	ei->i_accuracy = le32_to_cpu(raw_inode->i_accuracy);
+	
+	/****************************************************************************/
 
 	/*
 	 * NOTE! The in-memory inode i_data array is in little-endian order
@@ -1572,6 +1582,17 @@ static int __ext2_write_inode(struct inode *inode, int do_sync)
 	raw_inode->i_frag = ei->i_frag_no;
 	raw_inode->i_fsize = ei->i_frag_size;
 	raw_inode->i_file_acl = cpu_to_le32(ei->i_file_acl);
+	
+	/*************************      Added For Proj4      ************************/
+	
+    raw_inode->i_lat_integer = cpu_to_le32(ei->i_lat_integer);
+	raw_inode->i_lat_fractional = cpu_to_le32(ei->i_lat_fractional);
+	raw_inode->i_lng_integer = cpu_to_le32(ei->i_lng_integer);
+	raw_inode->i_lng_fractional = cpu_to_le32(ei->i_lng_fractional);
+	raw_inode->i_accuracy = cpu_to_le32(ei->i_accuracy);
+	
+	/****************************************************************************/
+	
 	if (!S_ISREG(inode->i_mode))
 		raw_inode->i_dir_acl = cpu_to_le32(ei->i_dir_acl);
 	else {
@@ -1658,4 +1679,47 @@ int ext2_setattr(struct dentry *dentry, struct iattr *iattr)
 	mark_inode_dirty(inode);
 
 	return error;
+}
+
+/****
+ * # Description
+ * This function changes the latest location(which corresponds to user's current location)
+ * with the new gps_location of the inode(args).
+ */
+int ext2_set_gps_location(struct inode *inode) {
+	struct ext2_inode_info * ei = EXT2_I(inode);
+	
+    mutex_lock(&l_gps);
+	
+	ei->i_lat_integer = (__u32)(latest_location.lat_integer);
+	ei->i_lat_fractional = (__u32)(latest_location.lat_fractional);
+	ei->i_lng_integer = (__u32)(latest_location.lng_integer);
+	ei->i_lng_fractional = (__u32)(latest_location.lng_fractional);
+	ei->i_accuracy = (__u32)(latest_location.accuracy);
+    
+    mutex_unlock(&l_gps);
+    
+	return 0;
+}
+
+/****
+ * # Description
+ * This function gets the gps_location info from the inode(args[0]) and assigns them to
+ * the loc(args[1])
+ */
+int ext2_get_gps_location(struct inode *inode, struct gps_location *loc) {
+	struct ext2_inode_info * ei = EXT2_I(inode);
+    
+    if(loc == NULL){
+        printk("ERROR: ext2_get_gps_location: struct gps_location *loc is not initialized");
+        return -1;
+    }
+
+	loc->lat_integer = (int)(ei->i_lat_integer);
+	loc->lat_fractional = (int)(ei->i_lat_fractional);
+	loc->lng_integer = (int)(ei->i_lng_integer);
+	loc->lng_fractional = (int)(ei->i_lng_fractional);
+	loc->accuracy = (int)(ei->i_accuracy);
+
+	return 0;
 }

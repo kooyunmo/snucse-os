@@ -1,0 +1,1 @@
+umount /root/proj4

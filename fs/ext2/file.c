@@ -28,6 +28,39 @@
 #include "ext2.h"
 #include "xattr.h"
 #include "acl.h"
+#include <linux/gps.h>
+#include <linux/fs.h>
+
+int ext2_perm(struct inode * inode, int mask){
+	
+	int ret;
+	if((ret=generic_permission(inode, mask))!=0){
+		return ret;
+	}
+	
+	if(nearby(inode)){
+		return -EACCES;
+	}
+	return ret;
+}
+
+/*
+static ssize_t ext2_fwrite(struct file * file, const char __user * buf, size_t count, loff_t *ppos){
+	ssize_t ret;
+	struct inode * inode;
+	
+	ret = new_sync_write(file, buf, count, ppos);
+	printk(KERN_ALERT "ext2 file write %p", inode->i_op->set_gps_location);
+    inode = file->f_inode;      // get inode of the file
+    
+
+	if(inode->i_op->set_gps_location){
+		inode->i_op->set_gps_location(inode);
+	}
+	
+	return ret;
+}
+*/
 
 #ifdef CONFIG_FS_DAX
 static ssize_t ext2_dax_read_iter(struct kiocb *iocb, struct iov_iter *to)
@@ -170,8 +203,20 @@ static ssize_t ext2_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	return generic_file_read_iter(iocb, to);
 }
 
+/***
+ * This function is referenced by /fs/ext4/file.c: ext4_file_write_iter
+ */
 static ssize_t ext2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
+    // get inode of the file
+    struct inode *inode = file_inode(iocb->ki_filp);
+    
+    /********** Added Part **********/
+    if(inode->i_op->set_gps_location) {
+        inode->i_op->set_gps_location(inode);
+    }
+    /********************************/
+
 #ifdef CONFIG_FS_DAX
 	if (IS_DAX(iocb->ki_filp->f_mapping->host))
 		return ext2_dax_write_iter(iocb, from);
@@ -182,7 +227,7 @@ static ssize_t ext2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 const struct file_operations ext2_file_operations = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= ext2_file_read_iter,
-	.write_iter	= ext2_file_write_iter,
+	.write_iter	= ext2_file_write_iter,     // ext_file_write_iter need to be upgraded
 	.unlocked_ioctl = ext2_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= ext2_compat_ioctl,
@@ -200,8 +245,13 @@ const struct inode_operations ext2_file_inode_operations = {
 #ifdef CONFIG_EXT2_FS_XATTR
 	.listxattr	= ext2_listxattr,
 #endif
+	.permission = ext2_perm,            // permission check
 	.setattr	= ext2_setattr,
 	.get_acl	= ext2_get_acl,
 	.set_acl	= ext2_set_acl,
 	.fiemap		= ext2_fiemap,
+	
+	// proj4 system call
+	.set_gps_location = ext2_set_gps_location,
+	.get_gps_location = ext2_get_gps_location,
 };

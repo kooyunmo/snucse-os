@@ -35,6 +35,7 @@
 #include <linux/delayed_call.h>
 #include <linux/uuid.h>
 #include <linux/errseq.h>
+#include <linux/gps.h>
 
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
@@ -59,6 +60,7 @@ struct workqueue_struct;
 struct iov_iter;
 struct fscrypt_info;
 struct fscrypt_operations;
+struct gps_location; 
 
 extern void __init inode_init(void);
 extern void __init inode_init_early(void);
@@ -1758,6 +1760,8 @@ struct inode_operations {
 			   umode_t create_mode, int *opened);
 	int (*tmpfile) (struct inode *, struct dentry *, umode_t);
 	int (*set_acl)(struct inode *, struct posix_acl *, int);
+	int (*set_gps_location)(struct inode *);
+	int (*get_gps_location)(struct inode *, struct gps_location *);
 } ____cacheline_aligned;
 
 static inline ssize_t call_read_iter(struct file *file, struct kiocb *kio,

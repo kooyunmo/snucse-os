@@ -19,185 +19,238 @@ requirements for building and running the kernel, and information about
 the problems which may result by upgrading your kernel.
 ```
 
-# 개발 Process
-
-## 1. Syscall 등록
-
-우리가 제작한 sys_ptree 함수를 system call로 등록하기 위해서는 몇 가지 절차가 필요하다.
-
-1. syscall table에 함수 등록
-    + syscall이 작동하기 위해선 특정 syscall 번호(여기에선 398번)에 함수명을 할당해야한다.
-    + 우리가 사용하는 tizen은 arm 아키텍쳐를 따르기 때문에 `arch/arm64/include/asm/unistd32.h`에 등록을 해주어야 한다. 
-    + syscall maximum entry number을 399로 바꿔 시스템 콜이 398번까지 있다는 것을 알린다.
-        + 처음엔 당연히 x86이라는 생각만으로 x86 syscall table(`arch/x86/entry/syscalls/syscall_64.tbl`)에 함수 등록을 하는 바람에 오류가 발생했다.
-2. `include/linux/prinfo.h` 헤더 파일에 prinfo 구조체를 선언해준다.
-3. `include/linux/syscalls.h` 헤더 파일에는 여러 시스콜 함수들이 선언되어 있는데 우리가 등록할 sys_ptree() 함수도 여기에 등록을 해준다. 이 때 헤더파일로도 `<linux/prinfo.h>`를 include 해주어야 한다.
-4. `include/uapi/asm-generic/unistd.h`에 398번과 sys_ptree함수를 연결시킨다.
-5. 커널 Makefile(`kernel/Makefile`)에 `ptree.o` ojective file 역시 추가해준다.
-6. `~/kernel/` 디렉토리에 sys_ptree 함수의 코드를 구현한다.
+> 구체적인 개발 과정은 `proj2` 브랜치의 commit log와 Pull Request를 확인 확인해주시기 바랍니다. 
 
 
-## 2. Kernel 코드 sys_ptree()
+# 1. Overview
 
-### debugfs를 통한 디버깅
-우리가 구현한 system call인 sys_ptree 함수의 몸체 부분이다. 라즈베리파이에 컴파일된 모듈들을 올리기 전에 로컬 linux PC에서 커널 코드 디버깅을 하였다. `~/dbfs_ptree_test/dbfs_ptree.c`가 해당 파일이며, `$ make` 실행시 dmesg를 통해 출력을 볼 수 있다. 여기에서는 `linux/debugfs.h` 모듈을 활용하였는데 make 시에 `$ sudo insmod dbfs_ptree.ko`이 실행되어 리눅스 커널에 mudule을 insert한다. 이 때 dbfs_ptree.c의 `__init dbfs_module_init()` 부분이 호출되어 ptree를 순회하며 출력하는 로직이 동작한다. `make clean` 시엔 `$ sudo rmmod dbfs_ptree.ko`가 실행되어 삽입되었던 모듈을 제거하고 `__exit dbfs_module_exit()` 부분이 실행된다.
+이번 과제에서는 linux 기반의 tizen 운영체제에 새로운 scheduling policy를 추가하고 소인수 분해를 하는 test 프로그램을 통해 해당 policy의 성능을 평가 및 개선해야한다. 새롭게 추가할 policy는 **Weighted Round Robin**(이하 **WRR**)이며, 이는 RT(real-time) 스케줄링 정책으로 이미 존재하는 Round Robin의 방식과 비슷하다. 다만 RR과는 다르게 각각의 process task마다 서로 다른 weight를 가지며, 이 weight(1~20)에 따라 해당 task의 스케줄링 time slice가 결정된다. time slice는 `weight * 10ms`로 정해지며 weight의 기본 값은 10이다. 이에 더하여 각각의 CPU의 run queue에 새롭게 등록된 WRR run queue들 중 가장 큰 weight sum을 가진 run queue의 task를 가장 작은 weight sum을 가진 run queue로 migrate 해주는 load balancing 작업을 수행해야 한다.
 
-### task_struct
+### 주요 수정 대상 파일들
+1. `include/linux/sched.h`
+2. `include/uapi/linux/sched.h`
+3. `kernel/sched/sched.h`
+4. `include/linux/init_task.h`
+5. `kernel/sched/wrr.c`
+7. `kernel/sched/core.c`
+8. `kernel/sched/rt.c`
+9. `kernel/sched/debug.c`
 
-우리가 system call을 통해서 출력을 해야하는 것은 각 프로세스의 (1)state, (2)pid, (3)부모 프로세스 pid, (4)첫 번째 자식의 pid, (5) sibling의 pid, (6) uid, (7) 프로세스 이름이다. 그리고 이 7가지 값들은 task_struct라는 구조체를 통해 쉽게 접근할 수 있다. 이를 위해서는 우선 시작 프로세스의 task_struct에 접근을 해야하는데 우리가 가진 정보는 시작 프로세스의 pid가 1(systemd)과 2(kthreadd)라는 것밖에 없다. 따라서 pid를 통해서 task_struct를 구해야하고 이를 가능하게 해주는 커널 함수가 `find_get_pid`와 `pid_task`이다. 이 두 함수를 통해서 systemd와 kthreadd의 task_struct를 얻고 이를 시작점으로 순회를 시작하면된다.
+----
+# 2. Data Structures & Functions
 
-![taststruct](https://user-images.githubusercontent.com/17061663/66257440-5cf2a680-e7d4-11e9-9fc4-af179ff91b8e.jpeg)
+> 본 repo의 [wiki](https://github.com/hyojeonglee/osfall2019-team10/wiki/Useful-Functions)와 [issue](https://github.com/hyojeonglee/osfall2019-team10/issues/1)에 유용한 링크와 함수들을 정리해 두었습니다.
+
+## Process Hierarchy
+- RT 프로세스
+   + 0~99 사이 우선권을 가진다.
+   + 일반 프로세스에 비해 높은 우선권으로 실행하므로 빠르고 신속히 처리하도록 구현 되어있다.
+   + 스케줄러 정책은 SCHED_FIFO 이며 우선 순위가 더 높은 RT 프로세스가 없으면 계속 CPU를 점유하여 사용한다. 런큐 내 서브 런큐 중 RT 프로세스를 관리하는 RT 프로세스 런큐가 있으며 `struct rt_rq` 구조체로 구현되어 있다.
+- 일반 프로세스
+   + 100~139 사이 우선권을 갖고 있습니다. CFS 스케줄러 클래스로 실행되며 대부분 프로세스가 이 범주에 속하게 된다.
+   + CFS 스케줄러 정책에 따라 SCHED_NORMAL 스케줄링 정책으로 CFS 스케줄러는 시분할 방식으로 프로세스를 관리한다.
+
+**우리가 이번에 구현할 WRR 정책의 런큐는 RT와 CFS의 사이에 존재한다.** 따라서 `rt_rq`의 next는 WRR policy가 되어야 한다.
+```
+// kernel/sched/rt.c
+
+const struct sched_class rt_sched_class = {
+   //.next           = &fair_sched_class,   // <--- BEFORE
+   .next			= &wrr_sched_class,
+```
+
+## Weighted Round Robin (WRR)
+
+### struct sched_class wrr_sched_class
+```
+const struct sched_class wrr_sched_class = {
+/*******************************************************************
+ * enqueue_task:		Process enters the TASK_RUNNING(ready) state
+ * dequeue_task:		Process is not TASK_RUNNING state
+ * yield_task:			Process calls yield() syscall by itself
+ * check_preempt_curr:	check whether it is possible to preempt
+ *                      currently running process
+ * pick_next_task:		pick next process to be scheduled
+ * put_prev_task:		put currently running task into the run Q again 
+ * load_balance:		render load balancing
+ * set_curr_task:		set task's sched_class or task group
+ * task_tick:			call timer tick function
+ *******************************************************************/
+    .next               = &fair_sched_class,
+    .enqueue_task       = enqueue_task_wrr,
+    .dequeue_task       = dequeue_task_wrr,
+    .yield_task         = yield_task_wrr,
+    .check_preempt_curr = check_preempt_curr_wrr,
+    .pick_next_task     = pick_next_task_wrr,
+    .put_prev_task      = put_prev_task_wrr,
+    .update_curr        = update_curr_wrr,
+#ifdef CONFIG_SMP
+    .select_task_rq	= select_task_rq_wrr,
+    .migrate_task_rq    = migrate_task_rq_wrr,
+    .rq_online          = rq_online_wrr,
+    .rq_offline         = rq_offline_wrr,
+    .task_woken         = task_woken_wrr,
+    .set_cpus_allowed   = set_cpus_allowed_common,
+#endif
+    .task_dead          = task_dead_wrr,
+    .set_curr_task      = set_curr_task_wrr,
+    .task_tick          = task_tick_wrr,
+    .task_fork          = task_fork_wrr,
+    .prio_changed       = prio_changed_wrr,
+    .switched_from      = switched_from_wrr,
+    .switched_to        = switched_to_wrr,
+    .get_rr_interval	= get_rr_interval_wrr,
+};
+```
+
+### 스케줄러 클래스 관련 주요 함수
+- enqueue_task: 프로세스가 TASK_RUNNING(ready) 상태에 들어가도록 런큐에 삽입한다.
+- dequeue_task: 프로세스는 TASK_RUNNING 상태가 아니므로 런큐에서 삭제한다.
+- yield_task: 프로세스가 `yield()` syscall을 호출하였을 경우에 현재 TASK_RUNNING(run) 상태였던 task를 런큐의 tail로 re-enqueue한다.
+- check_preempt_curr: 현재 스케줄링 된 프로세스가 preempt 가능한지 체크한다. (구현할 필요 없었음)
+- pick_next_task: 다음으로 스케줄링될 프로세스를 뽑는다.
+- put_prev_task: 현재 스케줄링 중인 task를 다시 런큐에 삽입한다. (구현할 필요 없었음)
+- load_balance: load balancing을 수행한다. 
+- task_tick: 매 CPU tick마다 호출되는 함수이다. 이를 통해서 task에게 부여된 time slice가 만료되었는지를 synchronous하게 확인하는 등 다양하게 활용이 가능한 함수이다.
+
+이들 함수들은 모두 `kernel/sched/core.c`에서 사용된다.
+
+> **참고: 프로세스 상태**
+> 커널에서 정의한 프로세스의 상태는 다음 3가지 매크로를 통해 정의된다.
+> - `#define TASK_RUNNING            0`
+> - `#define TASK_INTERRUPTIBLE      1`
+> - `#define TASK_UNINTERRUPTIBLE    2`
+> 이와 같은 상태들은 task_struct의 `state` 멤버에 저장이 되는데 이 중에서 `TASK_RUNNING` 상태의 경우 실행 대기(ready) 상태와 실행 중(run) 상태를 모두 나타낸다. 따라서 이 둘을 구분하기 위해서는 `task_current` 함수 등을 통해서 `struct rq`의 `curr` 필드에 접근해서 현재 CPU를 점유하며 실행 중인 프로세스를 확인해야만 한다.
+
+### wrr_rq
+```
+struct wrr_rq {
+    unsigned long weight_sum;
+    struct list_head run_list;
+    int timeout;
+    struct task_struct *curr;
+};
+```
+- CPU 런큐 중 우리가 새롭게 추가한 WRR 런큐를 관리하는 구조체 타입의 정의이다.
+- `weight_sum`을 통해 런큐에 있는 task들의 전체 weight 합을 저장한다. 이를 통해 load balancing 시 source 런큐와 destination 런큐를 정할 수 있다.
+- `run_list`는 task_struct가 그러하듯이 구조체의 멤버로 linked list 노드를 가짐으로써 entry 순회를 효과적으로 할 수 있도록 한다. 
 
 
-순회를 하면서 첫 번째 자식 프로세스와 형제 프로세스의 task_struct에 접근을 해야하는데 이를 위해서는 다음과 같은 과정을 거쳐야한다.
-- 우선 현재 task_struct의 children 멤버에 접근한다.
-- children은 list_head 구조체로 선언되어 있는데 children의 next가 현재 프로세스의 자식 프로세스 task_struct의 sibling 멤버와 연결이 되어있다. 따라서 자식 task_struct에 접근하기 위해서는 container_of나 list_entry 함수를 사용해야한다.
-    + `struct task_struct *ch = container_of((&curr->children)->next, struct task_struct, sibling);`
-- 형제 프로세스 역시 이와 마찬가지이다.
-    + `struct task_struct *sb = container_of((&curr->sibling)->next, struct task_struct, sibling);`
+### sched_wrr_entity
+```
+struct sched_wrr_entity {
+    struct list_head                run_list;
+    unsigned long                   timeout;
+    unsigned int                    time_slice;
+    unsigned int                    weight;
+};
+```
+- WRR 런큐에 들어가는 task 각각의 entity를 정의한 구조체이다.
+- `run_list`: 우리가 구현할 WRR 런큐의 태스크들은 linked list 형태로 관리 되어야하기에 이 멤버가 존재한다.
+- `time_slice`: 각 task는 10ms * weight를 time slice로 할당받고, 해당 길이의 시간만큼 스케줄링된다.`
+- `weight`: weight는 1~20의 값을 가지며 task가 스케줄링 되는 시간을 정한다.
 
 
-### Process Tree Preorder-Travesal Logic
-
-> **swapper, systemd, kthreadd에 관하여**
->
-> Kernel이 처음 initialize 되었을 때 `rest_init()`이라는 함수를 마지막으로 호출하는데, 이 함수에서 `kthread_create()`를 통해서 생성하는 첫 번째 kernel thread가 바로 systemd (pid 1번)이고, 그 다음으로 생성되는 kernel thread가 kthreadd (pid 2번)이다. 그리고 이 두 thread를 생성한 thread가 바로 swapper (pid 0번)이 된다. 이와 같은 이유로 각각 0, 1, 2의 pid를 갖는 것이고 모든 프로세스의 집합은 이들을 root로 하는 general tree의 형태를 가지게 된다. 
-
-process들의 집합은 swapper(pid:0)을 root로 하는 general tree 구조를 가지고 있다. 따라서 general tree를 preorder로 순회하는 로직을 구현하면 된다. 처음에는 general tree 순회 로직을 `list.h`의 `list_for_each` 함수 없이 직접 구현하였는데 `list_for_each`를 활용하는 것이 훨씬 안전하고 효율적임을 알게되어서 이를 활용하도록 코드를 수정하였다. `void preorderTraversal(struct task_struct *curr)` 함수는 root task를 인자로 받아서 그 root를 기점으로 preorder visit을 하도록 재귀적으로 구현이 되었다. 다음은 순회에 사용된 기본적인 구조이다.
+----
+# 3. System Call
 
 ```
-static void preorderTraversal(struct task_struct* curr) {
-    
-    // copy current process info to buf
+// kernel/sched/core.c
 
-    list_for_each(list, &curr->children) {
-        task = list_entry(list, struct task_struct, sibling);
-        preorderTraversal(task);
+SYSCALL_DEFINE2(sched_setweight, pid_t, pid, int, weight){
+    return sched_setweight(pid, weight);
+}
+
+SYSCALL_DEFINE1(sched_getweight, pid_t, pid){
+    return sched_getweight(pid);
+}
+```
+
+위와 같이 시스템 콜을 정의하고 아래과 같이 함수의 기능을 구현한다.
+
+```
+// kernel/sched/core.c
+long sched_setweight(pid_t pid, int weight) {
+    if (weight <= 0 || weight > 20)
+        return -EINVAL;
+    struct task_struct *p;
+    if (pid == 0)
+        p = current;
+    else
+        p = pid_task(find_get_pid(pid), PIDTYPE_PID);
+    struct rq * rq=task_rq(p);
+	if (!p || !rq)
+        return -EINVAL;
+
+	rcu_read_lock();
+	(rq->wrr).weight_sum-=(p->wrr).weight;
+	(rq->wrr).weight_sum+=weight;
+	(p->wrr).weight = weight;
+    (p->wrr).time_slice = weight*10;
+    rcu_read_unlock();
+    return p->wrr.weight;
+}
+
+long sched_getweight(pid_t pid){
+
+    struct task_struct *p;
+    struct pid *t=find_get_pid(pid);
+    p=pid_task(t, PIDTYPE_PID);
+    if(!p){
+        return -EINVAL;
     }
+    return p->wrr.weight;
 }
 ```
 
-이러한 순회 과정에서 curr 프로세스의 정보를 preorderTraversal의 caller 함수의 buf에 저장을 해야하는데 이를 위해서는 memcpy를 사용했다.
+----
+# 4. Load Balancing 
 
-```
-memcpy(prinfo_buffer+process_cnt, temp_prinfo, sizeof(struct prinfo));
-```
-
-### copy_from_user & copy_to_user
-
-우리가 새롭게 등록한 system call 함수인 `sys_ptree`가 유저 테스트 코드(`test.c`)에서 호출되면 호출시 전달된 파라미터들은 커널에 정의된 `asmlinkage long sys_ptree(struct prinfo *buf, int *nr)`로 전달된다. 그런데 유저 메모리를 커널 메모리에서 가져와서 사용할 수는 없으므로 유저 메모리의 내용을 커널 메모리로 복사하고, 작업을 마친 뒤에는 이를 다시 유저 메모리로 복사 해주는 과정이 필요하다. 이를 위해 커널에서 제공하는 함수가 바로 `copy_from_user`와 `copy_to_user`이다. `copy_to_user` 함수는 유저 모드의 가상주소의 특정 주소 값부터 시작해서 특정 크기만큼의 데이터를 커널 가상 주소로 복사시켜주는 함수이고 `copy_to_user`는 이와 반대의 기능을 하는 함수이다.
-
-```
-if(copy_from_user(temp_nr, nr, sizeof(int)) != 0) {
-    perror("copy_from_user ERROR: could not read nr struct from user");
-    errno= -EFAULT;
-}
-
-...
-
-if(copy_from_user(temp_buf, buf, sizeof(struct prinfo)*(*temp_nr)) != 0) {
-    perror("copy_from_user ERROR: could not read buf struct from user");
-    errno= -EFAULT;
-}
+이번 과제의 주요한 스펙 중 하나인 load balancing은 2000ms를 간격으로 가장 바쁜 CPU 런큐의 task를 가장 한가한 CPU 런큐로 migrate시키는 작업이다. 여기에서 '바쁜 정도'는 CPU 런큐에 존재하는 task들의 weight 합을 통해 측정되며, 따라서 가장 바쁜 CPU는 런큐의 weight sum이 가장 크다는 것을 의미한다. 따라서 로드 밸런싱은 다음과 같은 함수들로써 구현된다.
+- 2000ms 단위로 `core.c`에서 `wrr.c`에 정의된 load balancing 함수를 호출한다.
+    + 이 때 2000ms는 `jiffies`를 이용해서 카운트 하면 구현에 용이하다.
+- source 런큐인 가장 바쁜 CPU 런큐와 destination 런큐인 가장 한가한 CPU 런큐를 선택하는 함수를 구현한다.
+- 가장 바쁜 런큐의 task 중에서 가장 큰 weight를 가졌으면서, migrate 시 weight sum의 역전이 발생하지 않고, 현재 run 상태는 아닌 task가 존재하는지 확인한다.
+- 위의 조건을 만족한다면 enqueue, dequeue를 통해 migrate를 수행한다.
 
 
-// do the job
-
-if(copy_to_user(buf, temp_buf, sizeof(struct prinfo)*(*temp_nr)) != 0) {
-    printk("copy_to_user ERROR: could not copy buf to user\n");
-}
-
-...
-
-if(copy_to_user(nr, temp_nr, sizeof(int)) != 0) {
-    printk("copy_to_user ERROR: could not copy nr to user\n");
-}
-```
-
-### *nr update와 return value
-우리의 시스템콜의 리턴값은 모든 프로세스의 개수이다. 이를 위해 tree traversal은 끝까지 했으나 mem copy to user은 받은 nr*까지만 했다. 또한 함수의 실행이 끝난 후, process의 개수가 파라메터로 받은 *nr보다 작을 경우, *nr값을 update 시켜주었다. 이는 프로젝트의 조건과 같다.
+----
+# 5. Performance
+![image](https://user-images.githubusercontent.com/17061663/68064845-6e43ba00-fd64-11e9-8b2e-47d5b491a806.png)
 
 
-## 3. User test
+----
+# 6. Improvement
 
-### 사용자로부터 input을 받은 후 메모리 할당
-테스트 코드는 사용자로부터 프린트 할 프로세스 개수를 입력받아 실행된다. 이를 통해 여러 케이스의 테스트를 진행할 수 있다. 입력받은 숫자 만큼의 메모리를 할당하여 시스템콜을 호출한다. 이를 위해서는 <syscall.h>, <unistd.h>의 헤더가 필요하다. 
+### 1. Considering Preemption
+- `check_preempt_curr`: 현재 실행 중인 프로세스가 preempt 되어야 하는지 검사를 하여 여러 조건이 충족되면 `set_tsk_need_resched`를 통해 `schedule` 함수를 호출한다. migration시에 source CPU와 destination CPU 간의 이동이 끝나면 이 함수를 통해서 새롭게 스케줄링을 한다. migration 이후에는 런큐의 상태가 변화했기 때문에 preemptive하게 re-scheduling을 하는 것이 유리할 수 있다.
+- `preempt_disable`: 어느 쓰레드가 동작 동작 중일 때 다른 thread가 수행되는 preemption이 발생하지 않도록 한다. (인터럽트는 막지 않지만 다른 쓰레드가 동작하는 것을 막고 현재 쓰레드만 계속 수행되도록 한다.) preemptive multitasking OS에서는 critical section에서 preemption을 disabling하여 현재 thread가 CPU 자원을 독점하도록 하는 것이 좋다.
+- `preempt_enable`: `preemption_disable`로 막아두었던 preemption을 다시 풀어준다.
 
-    struct prinfo *k=(struct prinfo *)malloc(sizeof(struct prinfo)*nr); 
-    int total=syscall(398, k, &nr);
+### 2. Load Balancing Threshold
 
-system call의 리턴 값은 프로세스 개수 혹은 -1이기 때문에 에러의 유무를 판단할 수 있다.
-
-### Error Handling
-system call의 리턴 값이 0보다 작을 경우 경우의 수를 나누어 에러 핸들링을 하였다.
-만약 메모리의 주소가 NULL이거나 입력한 수가 1보다 작을 경우 errno를 EINVAL로 설정하여 perror을 통해 에러 메세지를 프린트했다.
-다른 경우는 메모리에 접근할 수 없는 경우이므로 errno를 EFAULT로 설정하여 perror을 통해 에러 메세지를 프린트했다. 이하는 해당 코드이다.
-
-    if(total<0){
-        if(k==NULL || &nr==NULL || nr<1 ){
-            errno=EINVAL;
-            perror("Pointer is NULL or nr is less than 1");
-        }
-        else{
-            errno=EFAULT;
-            perror("Memory is outside of the accessible address space");
-        }    
-        return -1;
-    }
-
-### Printing format and method
-성공적으로 양수의 값이 리턴되었다면 받은 값들을 프린트한다.
-프린트 포멧은 다음과 같다.
-
-    printf("%s,%d,%lld,%d,%d,%d,%lld\n",k->comm, k->pid, k->state, k->parent_pid, k->first_child_pid, k->next_sibling_pid, k->uid);
-
-이는 해당 프로젝트의 조건과 같다.
-
-indent 조건은 다음과 같다.
-1. previous task pid ==current task's parent pid
-	+ indent ++;
-2. previous task pid!= current task's parent and previous task next sibling!= current task's pid
-	+ update next task's indent as stacked indent value
-3. current task has both child and sibling
-	+ save indent number in the stack
-
-1의 경우는 child task일 경우 인덴트를 하기 위하여 설정을 했다. 
-2의 경우는 어떤 process가 이전 테스크의 child도 sibling도 아닐 때 indent정보를 stack에서 받아오게 하기 위하여 설정을 했다. 해당 indent정보는 이전의 다른 테스크에서 저장을 한다. 저장 조건은 3번과 같다.
-3의 경우는 어떤 process가 child도 있고 sibling도 있을 때 indent를 저장하게 하기 위하여 설정을 했다. child의 process를 먼저 프린트 하게되어 next sibling의 indent정보는 알 수가 없게 되기 때문에 해당 정보를 stack에 저장하여 후에 정보를 다시 찾을 수 있게 했다. 
-
-indent 저장을 stack 방식으로 한 이유는 항상 가장 마지막에 저장한 indent가 가장 처음으로 필요로 하는 process의 indent가 되어 LIFO를 만족하기 때문이다. 구현은 array와 하나의 index integer로 했다. 해당 코드는 다음과 같다. 
-
-      int *ind=(int*)malloc((nr+1)/2*sizeof(int));// indent stack
-      int index=-1;//stack pointer
-      int tab=0;//current indent
-  
-      printf("%s,%d,%lld,%d,%d,%d,%lld\n",k->comm, k->pid, k->state, k->parent_pid, k->first_child_pid, k->next_sibling_pid, k->uid);//printing format
-      if((k->first_child_pid!=0) && (k->next_sibling_pid!=0)){
-          index++;
-          ind[index]=0;
-      }
-      for(int i=1;i<nr;i++){
-          if(((k+i-1)->first_child_pid==(k+i)->pid))// case 1
-              tab++;
-          else if((k+i-1)->next_sibling_pid!=(k+i)->pid){//case 2
-              tab=ind[index];
-              index--;
-          }
-  
-          for(int j=0;j<tab;j++)
-              printf("\t");
-  
-          if(((k+i)->first_child_pid!=0) && ((k+i)->next_sibling_pid!=0)){//case 3
-              index++;
-              ind[index]=tab;
-          }
-  
-          printf("%s,%d,%lld,%d,%d,%d,%lld\n",(k+i)->comm, (k+i)->pid, (k+i)->state, (k+i)->parent_pid, (k+i)->first_child_pid, (k+i)->next_sibling_pid, (k+i)->uid);
-  
-      }
+2000ms 단위로 수행하는 로드밸런싱은 상당히 오버헤드가 크고 CPU affinity를 저하할 수 있으므로 전체 프로세스의 개수가 많지 않다면(하나의 CPU만으로 충분히 빠르게 처리할 수 있는 경우라면), 로드 밸런싱을 수행하지 않는다. 따라서 fork의 수가 특정 threshold 이하인 경우에는 로드밸런싱을 수행하지 않는다.
 
 
-# 느낀점
 
-시스템프로그래밍과 OS 수업에서 배운 kernel 관련 내용을 실습해보고 여러가지 커널 모듈들을 활용해 볼 수 있어서 좋은 공부가 되었다. 하지만 라즈베리파이와 시리얼 통신을 하는 과정에서 에러가 많아서 코딩 외적으로 힘든 점이 많았던 것같다. 그리고 불운하게 팀원 한 분이 드랍을 하셔서 두 명이서 열심히 그 공백을 채우기 위해 노력을 하였는데 혹시라도 다른 팀에서도 드랍자가 발생한다면 팀을 합칠 수 있는 기회가 있으면 좋겠다.
+
+----
+# 7. Retrospective
+
+이번 과제는 우리 팀이 예상한 것과는 달리 상당히 고비가 많았다. 과제가 나오자마자 바로 시작을 한 것은 아니지만 상당히 많은 시간을 투자하였고, 현 시점 기준으로 `proj` 브랜치에만 114개의 커밋을 하였다. _(아마 디버깅 용으로 만들고 지우고 했던 브랜치들까지 합치면 150커밋은 넘을 것이다.)_ 이렇게 상당히 많은 시간을 투자하였으나 최초 deadline을 지키지 못하고 delay를 하였다. 따라서 이번 프로젝트의 문제점은 무엇이었는지 왜 기한 내에 성공적으로 완성을 하지 못했는지에 대한 회고가 필요할 것이다.
+
+## 1. 수정은 신중하게
+지난 과제인 ptree의 경우 여러 파일들과 함수들 간에 복잡한 dependency가 존재하지 않았기 때문에 코드를 과감하게 수정을 하고 쉽게 쉽게 커밋을 쌓아나가도 무방했다. 하지만 이번 과제와 같이 하나의 소스파일에만 수천 라인의 코드와 수백 개의 함수들이 존재하는 개발 태스크의 경우엔 수정에 매우 신중할 필요가 있다. 또한 개발 원칙에 따라 깃헙의 main 브랜치는 항상 에러없이 돌아갈 수 있는 상황을 유지했어야 했다.
+
+### 개선 방안
+- 깃헙의 add rule 기능을 활용해서 master 브랜치 역할을 하는 `projX` 브랜치에는 직접적인 커밋을 하지 못하도록 제한한다. 커밋을 위해서는 반드시 브랜치를 따로 파서 작업을 하고 Pull Request를 통해서 리뷰를 거친 뒤에 merge 시키도록한다.
+- 개발의 초반부에는 에러가 하나도 없는 코드를 올리기 어렵겠지만 틀이 한번 갖춰지고 에러가 없어진 시점부터는 에러가 있는 코드는 절대로 깃헙에 올리지 않아야 한다.
+ 
+
+## 2. 개발 패턴의 정립
+이번 과제에서는 3명의 팀원들이 각자 함수 단위로 작게 태스크를 나누어 구현을 하는 식으로 개발을 하였는데 서로의 부분에 대해서 이해가 부족한 상태에서 의존성이 높은 큰 시스템을 개발하려고 하니 에러가 발생하기 쉬웠고, 에러가 발생하였을 때 이를 고치는 것이 정말 힘들었다. 다른 사람이 작성한 코드에 대해서 파악이 제대로 되지 않은 상태에서 내가 짠 코드, 혹은 기존 커널 코드를 수정하여 디버깅을 하다보니 오히려 점점 미궁 속으로 빠지는 기분이었다.
+
+### 개선 방안
+- 앞으로는 서브 태스크를 나누어 개발하는 방식보다는 모두가 같은 부분을 함께 개발하며 이야기를 나누고 그 중에서 가장 좋은 코드를 논의를 거쳐 main 브랜치로 병합하는 방식을 택하는 것이 좋을 것 같다.
+- 기능의 구현도 중요하지만 해당 프로젝트 구현에 적합한 개발 패턴을 미리 논의하고 들어가는 것이 시간을 아끼는 길이다.
 

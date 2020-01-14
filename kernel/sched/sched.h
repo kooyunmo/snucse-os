@@ -140,10 +140,16 @@ static inline int dl_policy(int policy)
 {
 	return policy == SCHED_DEADLINE;
 }
+
+static inline int wrr_policy(int policy)
+{
+    return policy == SCHED_WRR;
+}
+
 static inline bool valid_policy(int policy)
 {
 	return idle_policy(policy) || fair_policy(policy) ||
-		rt_policy(policy) || dl_policy(policy);
+		rt_policy(policy) || dl_policy(policy) || wrr_policy(policy);
 }
 
 static inline int task_has_rt_policy(struct task_struct *p)
@@ -270,6 +276,7 @@ extern bool dl_cpu_busy(unsigned int cpu);
 
 struct cfs_rq;
 struct rt_rq;
+struct wrr_rq;
 
 extern struct list_head task_groups;
 
@@ -541,6 +548,14 @@ struct rt_rq {
 #endif
 };
 
+/* Weighted Round Robin class' related fields in a runqueue */
+struct wrr_rq {
+    unsigned long weight_sum;
+    struct list_head run_list;
+    int timeout;
+    struct task_struct *curr;
+};
+
 /* Deadline class' related fields in a runqueue */
 struct dl_rq {
 	/* runqueue is an rbtree, ordered by deadline */
@@ -708,7 +723,7 @@ struct rq {
 	struct cfs_rq cfs;
 	struct rt_rq rt;
 	struct dl_rq dl;
-
+    struct wrr_rq wrr;
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	/* list of leaf cfs_rq on this cpu: */
 	struct list_head leaf_cfs_rq_list;
@@ -1494,6 +1509,7 @@ static inline void set_curr_task(struct rq *rq, struct task_struct *curr)
 extern const struct sched_class stop_sched_class;
 extern const struct sched_class dl_sched_class;
 extern const struct sched_class rt_sched_class;
+extern const struct sched_class wrr_sched_class;
 extern const struct sched_class fair_sched_class;
 extern const struct sched_class idle_sched_class;
 
@@ -1505,6 +1521,8 @@ extern void update_group_capacity(struct sched_domain *sd, int cpu);
 extern void trigger_load_balance(struct rq *rq);
 
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
+
+extern void wrr_load_balance(void);
 
 #endif
 
@@ -1539,6 +1557,7 @@ extern void sched_init_granularity(void);
 extern void update_max_interval(void);
 
 extern void init_sched_dl_class(void);
+extern void init_sched_wrr_class(void);
 extern void init_sched_rt_class(void);
 extern void init_sched_fair_class(void);
 
@@ -1968,9 +1987,11 @@ extern bool sched_debug_enabled;
 
 extern void print_cfs_stats(struct seq_file *m, int cpu);
 extern void print_rt_stats(struct seq_file *m, int cpu);
+extern void print_wrr_stats(struct seq_file *m, int cpu);
 extern void print_dl_stats(struct seq_file *m, int cpu);
 extern void print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq);
 extern void print_rt_rq(struct seq_file *m, int cpu, struct rt_rq *rt_rq);
+extern void print_wrr_rq(struct seq_file *m, int cpu, struct wrr_rq *wrr_rq);
 extern void print_dl_rq(struct seq_file *m, int cpu, struct dl_rq *dl_rq);
 #ifdef CONFIG_NUMA_BALANCING
 extern void
@@ -1984,6 +2005,7 @@ print_numa_stats(struct seq_file *m, int node, unsigned long tsf,
 extern void init_cfs_rq(struct cfs_rq *cfs_rq);
 extern void init_rt_rq(struct rt_rq *rt_rq);
 extern void init_dl_rq(struct dl_rq *dl_rq);
+extern void init_wrr_rq(struct wrr_rq *wrr_rq);
 
 extern void cfs_bandwidth_usage_inc(void);
 extern void cfs_bandwidth_usage_dec(void);

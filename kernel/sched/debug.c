@@ -637,6 +637,42 @@ void print_dl_rq(struct seq_file *m, int cpu, struct dl_rq *dl_rq)
 #undef PU
 }
 
+void print_wrr_rq(struct seq_file *m, int cpu, struct wrr_rq *wrr_rq)
+{
+    printk("\n\n\n\n\n");
+    printk("seq_file *m: %p, cpu: %d, *wrr_rq: %p\n");
+    printk("debug 1\n");
+	SEQ_printf(m, "\nwrr_rq[%d]:\n", cpu);
+    printk("debug 2\n");
+
+#define P(x) \
+	SEQ_printf(m, "  .%-30s: %Ld\n", #x, (long long)(wrr_rq->x))
+#define PU(x) \
+	SEQ_printf(m, "  .%-30s: %lu\n", #x, (unsigned long)(wrr_rq->x))
+#define PN(x) \
+	SEQ_printf(m, "  .%-30s: %Ld.%06ld\n", #x, SPLIT_NS(wrr_rq->x))
+
+	//PU(rt_nr_running);
+	//PU(wrr_nr_migratory);
+    printk("debug 3\n");
+    PU(weight_sum);
+    printk("debug 4\n");
+    struct list_head *p;
+    struct sched_wrr_entity *se;
+    struct task_struct * task;
+    list_for_each(p, &(wrr_rq->run_list)){
+        se=list_entry(p, struct sched_wrr_entity, run_list);
+        task=container_of(se, struct task_struct, wrr);
+        SEQ_printf(m,  "  .%-30s: weight= %d\n", task->comm, se->weight);
+    }
+    printk("debug 5\n");
+    printk("\n\n\n\n\n");
+
+#undef PN
+#undef PU
+#undef P
+}
+
 extern __read_mostly int sched_clock_running;
 
 static void print_cpu(struct seq_file *m, int cpu)
@@ -703,7 +739,8 @@ do {									\
 
 	spin_lock_irqsave(&sched_debug_lock, flags);
 	print_cfs_stats(m, cpu);
-	print_rt_stats(m, cpu);
+    print_wrr_stats(m, cpu);
+    print_rt_stats(m, cpu);
 	print_dl_stats(m, cpu);
 
 	print_rq(m, rq, cpu);

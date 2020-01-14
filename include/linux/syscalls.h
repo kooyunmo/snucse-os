@@ -66,7 +66,6 @@ struct old_linux_dirent;
 struct perf_event_attr;
 struct file_handle;
 struct sigaltstack;
-struct prinfo;
 union bpf_attr;
 
 #include <linux/types.h>
@@ -81,7 +80,7 @@ union bpf_attr;
 #include <linux/quota.h>
 #include <linux/key.h>
 #include <trace/syscall.h>
-#include <linux/prinfo.h>
+
 /*
  * __MAP - apply a macro to syscall arguments
  * __MAP(n, m, t1, a1, t2, a2, ..., tn, an) will expand to
@@ -941,5 +940,6 @@ asmlinkage long sys_pkey_alloc(unsigned long flags, unsigned long init_val);
 asmlinkage long sys_pkey_free(int pkey);
 asmlinkage long sys_statx(int dfd, const char __user *path, unsigned flags,
 			  unsigned mask, struct statx __user *buffer);
-asmlinkage long sys_ptree(struct prinfo *buf, int *nr);
+asmlinkage long sched_setweight(pid_t pid, int weight);
+asmlinkage long sched_getweight(pid_t pid);
 #endif

@@ -1,5 +1,5 @@
 #
-#Automatically generated file; DO NOT EDIT.
+# Automatically generated file; DO NOT EDIT.
 # Linux/arm64 4.14.67 Kernel Configuration
 #
 CONFIG_ARM64=y
@@ -4408,4 +4408,3 @@ CONFIG_SG_POOL=y
 CONFIG_ARCH_HAS_SG_CHAIN=y
 CONFIG_SBITMAP=y
 # CONFIG_STRING_SELFTEST is not set
-

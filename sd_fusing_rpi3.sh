@@ -56,9 +56,15 @@ function fusing_image () {
 	# get binary info using basename
 	get_index_use_name $(basename $fusing_img)
 	local -r -i part_idx=$?
+	local EFFECTIVE_DEVICE=$DEVICE
+
+	if [[ "$DEVICE" =~ [0-9]$ ]]
+	then
+		EFFECTIVE_DEVICE+="p"
+	fi
 
 	if [ $part_idx -ne $PART_TABLE_COL ];then
-		local -r device=$DEVICE${PART_TABLE[${part_idx} * ${PART_TABLE_ROW} + 1]}
+		local -r device=$EFFECTIVE_DEVICE${PART_TABLE[${part_idx} * ${PART_TABLE_ROW} + 1]}
 		local -r bs=${PART_TABLE[${part_idx} * ${PART_TABLE_ROW} + 2]}
 	else
 		echo "Not supported binary: $fusing_img"
@@ -162,6 +168,13 @@ function mkpart_3 () {
 	local -r RAMDISK_RECOVERY=ramdisk-recovery
 	local -r INFORM=inform
 
+	local EFFECTIVE_DISK=$DISK
+
+	if [[ "$DISK" =~ [0-9]$ ]]
+	then
+		EFFECTIVE_DISK+="p"
+	fi
+
 	if [[ $USER_SZ -le 100 ]]
 	then
 		echo "We recommend to use more than 4GB disk"
@@ -171,15 +184,15 @@ function mkpart_3 () {
 	echo "========================================"
 	echo "Label          dev           size"
 	echo "========================================"
-	echo $BOOT"		" $DISK"1	" $BOOT_SZ "MB"
-	echo $ROOTFS"		" $DISK"2	" $ROOTFS_SZ "MB"
-	echo $SYSTEMDATA"	" $DISK"3	" $DATA_SZ "MB"
-	echo "[Extend]""	" $DISK"4"
-	echo " "$USER"		" $DISK"5	" $USER_SZ "MB"
-	echo " "$MODULE"	" $DISK"6	" $MODULE_SZ "MB"
-	echo " "$RAMDISK"	" $DISK"7	" $RAMDISK_SZ "MB"
-	echo " "$RAMDISK_RECOVERY"	" $DISK"8	" $RAMDISK_RECOVERY_SZ "MB"
-	echo " "$INFORM"	" $DISK"9	" $INFORM_SZ "MB"
+	echo $BOOT"		" $EFFECTIVE_DISK"1	" $BOOT_SZ "MB"
+	echo $ROOTFS"		" $EFFECTIVE_DISK"2	" $ROOTFS_SZ "MB"
+	echo $SYSTEMDATA"	" $EFFECTIVE_DISK"3	" $DATA_SZ "MB"
+	echo "[Extend]""	" $EFFECTIVE_DISK"4"
+	echo " "$USER"		" $EFFECTIVE_DISK"5	" $USER_SZ "MB"
+	echo " "$MODULE"	" $EFFECTIVE_DISK"6	" $MODULE_SZ "MB"
+	echo " "$RAMDISK"	" $EFFECTIVE_DISK"7	" $RAMDISK_SZ "MB"
+	echo " "$RAMDISK_RECOVERY"	" $EFFECTIVE_DISK"8	" $RAMDISK_RECOVERY_SZ "MB"
+	echo " "$INFORM"	" $EFFECTIVE_DISK"9	" $INFORM_SZ "MB"
 
 	local MOUNT_LIST=`mount | grep $DISK | awk '{print $1}'`
 	for mnt in $MOUNT_LIST
@@ -216,20 +229,20 @@ function mkpart_3 () {
 		__EOF__
 	fi
 
-	mkfs.vfat -F 16 ${DISK}1 -n $BOOT
-	mkfs.ext4 -q ${DISK}2 -L $ROOTFS -F
-	mkfs.ext4 -q ${DISK}3 -L $SYSTEMDATA -F
-	mkfs.ext4 -q ${DISK}5 -L $USER -F
-	mkfs.ext4 -q ${DISK}6 -L $MODULE -F
-	mkfs.ext4 -q ${DISK}7 -L $RAMDISK -F
-	mkfs.ext4 -q ${DISK}8 -L $RAMDISK_RECOVERY -F
-	mkfs.ext4 -q ${DISK}9 -L $INFORM -F
+	mkfs.vfat -F 16 ${EFFECTIVE_DISK}1 -n $BOOT
+	mkfs.ext4 -q ${EFFECTIVE_DISK}2 -L $ROOTFS -F
+	mkfs.ext4 -q ${EFFECTIVE_DISK}3 -L $SYSTEMDATA -F
+	mkfs.ext4 -q ${EFFECITVE_DISK}5 -L $USER -F
+	mkfs.ext4 -q ${EFFECTIVE_DISK}6 -L $MODULE -F
+	mkfs.ext4 -q ${EFFECTIVE_DISK}7 -L $RAMDISK -F
+	mkfs.ext4 -q ${EFFECTIVE_DISK}8 -L $RAMDISK_RECOVERY -F
+	mkfs.ext4 -q ${EFFECTIVE_DISK}9 -L $INFORM -F
 
 	# create "reboot-param.bin" file in inform partition for passing reboot parameter
 	# It should be done only once upon partition format.
-	umount ${DISK}9
+	umount ${EFFECTIVE_DISK}9
 	mkdir mnt_tmp
-	mount -t ext4 ${DISK}9 ./mnt_tmp
+	mount -t ext4 ${EFFECTIVE_DISK}9 ./mnt_tmp
 	touch ./mnt_tmp/reboot-param.bin
 	sync
 	umount ./mnt_tmp

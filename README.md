@@ -55,7 +55,7 @@ the problems which may result by upgrading your kernel.
 
 ### 1. range descriptor
 
-```
+```c
 typedef struct __range_descriptor {
     int degree;
     int range;
@@ -71,7 +71,7 @@ typedef struct __range_descriptor {
 
 ### 2. List & Mutex & CV / Semaphore
 
-```
+```c
 LIST_HEAD(rd_list);
 DECLARE_WAIT_QUEUE_HEAD(__wait_queue);
 DEFINE_MUTEX(rd_list_mutex);
@@ -80,6 +80,7 @@ atomic_t __read_cnt = ATOMIC_INIT(0);
 atomic_t __write_cnt = ATOMIC_INIT(0);
 static int curr_degree;
 ```
+
 - `LIST_HEAD(rd_list)`: 위에서 설명한 `range_descriptor` 구조체들이 연결될 리스트의 헤드이다.
 - `DECLARE_WAIT_QUEUE_HEAD(__wait_queue)`: 여러 개의 wait queue를 통해서 구현할 수도 있지만 proj3 브랜치의 코드에서는 wait queue 하나만 사용한다.
 - `DEFINE_MUTEX(rd_list_mutex)`: `range_descriptor` 리스트의 mutual exclusion을 위해서 선언
@@ -92,7 +93,8 @@ static int curr_degree;
 ## Primary Auxiliary Functions
 
 ### 1. Range Validation
-```
+
+```c
 static int onrange(int degree, int range) {
     int start = degree >= range ? degree - range : 360 + degree - range;
     int end = (degree + range) % 360;
@@ -106,7 +108,8 @@ static int onrange(int degree, int range) {
 - 범위 안에 들어오지 않는다면 return 0
 
 ### 2. Initialize
-```
+
+```c
 static range_descriptor* init_rd(int degree, int range, int type) {
     range_descriptor *rd = kmalloc(sizeof(range_descriptor), GFP_KERNEL);
     rd->degree = degree;
@@ -121,7 +124,8 @@ static range_descriptor* init_rd(int degree, int range, int type) {
 - `range_descriptor`를 초기화하여 메모리 공간 관리
 
 ### 3. Sleep
-```
+
+```c
 static void sleep_on(void) {
     mutex_lock(&wait_mutex);
     DEFINE_WAIT(wait_queue_entry);
@@ -156,7 +160,8 @@ static void sleep_on(void) {
 > 시스템 콜 등록 과정은 proj1, proj2와 다를바가 없으므로 생략
 
 ### 1. set_rotation
-```
+
+```c
 long sys_set_rotation(int degree) {
     printk(KERN_CONT "set_rotation: %d \n", degree);
     curr_degree = degree;
@@ -173,7 +178,7 @@ long sys_set_rotation(int degree) {
 
 ### 2. rotlock_read
 
-```
+```c
 long sys_rotlock_read(int degree, int range) {
     range_descriptor *new_rd, *rd_cursor;
     int has_earlier_writing;
@@ -215,6 +220,7 @@ long sys_rotlock_read(int degree, int range) {
     return 0;
 }
 ```
+
 - reader들 끼리는 동시에 lock을 잡을 수 있되, 자신보다 먼저 lock을 시도한 writer가 있다면 (즉, wait queue 상에서 reader 자신보다 head에 가까운 writer가 하나라도 존재한다면) 그 writer가 먼저 lock을 잡고 unlock한 뒤에서야 lock을 잡을 수 있다.
 - 자신보다 wait queue 상에서 앞에 존재하는 writer의 존재 여부를 파악하기 위해서 range_descriptor list(`rd_list`)를 순회한다. 각각의 range_descriptor entry는 `type (reader / writer)` 을 멤버로 가지고 있기 때문에 해당 엔트리가 reader인지 writer인지 쉽게 파악할 수 있다.
 - 그 밖에도 reader의 range가 rotd에 대해서 유효한지 역시 검사되어야 한다.
@@ -222,7 +228,8 @@ long sys_rotlock_read(int degree, int range) {
 - lock을 잡았다면 `atomic_add` 함수를 통해 `__read_cnt`를 1 증가 시켜서 현재 lock을 잡고 있는 reader의 수를 업데이트 해준다. 이는 writer가 lock을 잡을 수 있는 조건을 검사하는데 활용이 된다.
 
 ### 3. rotlock_write
-```
+
+```c
 long sys_rotlock_write(int degree, int range) {
     range_descriptor *new_rd, *rd_cursor;
     int has_earlier_reading;
@@ -269,6 +276,7 @@ long sys_rotlock_write(int degree, int range) {
     return 0;
 }
 ```
+
 - range에 대한 유효성 검사는 reader와 마찬가지로 이루어져야한다.
 - writer는 reader와 다르게 여럿의 writer가 함께 lock을 잡는 것이 불가능하다.
 - 한 개의 reader라도 현재 lock을 잡고 있는 상태라면 writer는 기다려야한다.
@@ -278,7 +286,8 @@ long sys_rotlock_write(int degree, int range) {
 
 
 ### 4. rotunlock_read
-```
+
+```c
 long sys_rotunlock_read(int degree, int range) {
     range_descriptor *rd_cursor;
 
@@ -309,12 +318,14 @@ long sys_rotunlock_read(int degree, int range) {
     return -1;
 }
 ```
+
 - range에 대한 유효성 검사는 unlock 시에도 이루어져야한다.
   + unlock 시에도 range에 대한 유효성을 체크하는 것이 매우 비효율적이라고 판단되어서 제거하려고 하였으나, 과제 스펙에 명시가 되어 있어서 그대로 구현을 하였다.
 - unlock 시엔 `atomic_sub`를 통해서 `__read_cnt`를 감소 시켜주어야 한다.
 
 ### 5. rotunlock_write
-```
+
+```c
 long sys_rotunlock_write(int degree, int range) {
     range_descriptor *rd_cursor;
 
@@ -345,6 +356,7 @@ long sys_rotunlock_write(int degree, int range) {
     return -1;
 }
 ```
+
 - reader와 마찬가지로 rotd가 올바른 형식이어야하고 rotd가 writer의 범위 내에 들어와야 unlock을 할 수 있다.
 - `atomic_sub`를 통해서 `__write_cnt`를 0(false)으로 만들어준다.
 

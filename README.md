@@ -65,7 +65,7 @@ the problems which may result by upgrading your kernel.
 
 process들의 집합은 swapper(pid:0)을 root로 하는 general tree 구조를 가지고 있다. 따라서 general tree를 preorder로 순회하는 로직을 구현하면 된다. 처음에는 general tree 순회 로직을 `list.h`의 `list_for_each` 함수 없이 직접 구현하였는데 `list_for_each`를 활용하는 것이 훨씬 안전하고 효율적임을 알게되어서 이를 활용하도록 코드를 수정하였다. `void preorderTraversal(struct task_struct *curr)` 함수는 root task를 인자로 받아서 그 root를 기점으로 preorder visit을 하도록 재귀적으로 구현이 되었다. 다음은 순회에 사용된 기본적인 구조이다.
 
-```
+```c
 static void preorderTraversal(struct task_struct* curr) {
     
     // copy current process info to buf
@@ -79,7 +79,7 @@ static void preorderTraversal(struct task_struct* curr) {
 
 이러한 순회 과정에서 curr 프로세스의 정보를 preorderTraversal의 caller 함수의 buf에 저장을 해야하는데 이를 위해서는 memcpy를 사용했다.
 
-```
+```c
 memcpy(prinfo_buffer+process_cnt, temp_prinfo, sizeof(struct prinfo));
 ```
 
@@ -87,7 +87,7 @@ memcpy(prinfo_buffer+process_cnt, temp_prinfo, sizeof(struct prinfo));
 
 우리가 새롭게 등록한 system call 함수인 `sys_ptree`가 유저 테스트 코드(`test.c`)에서 호출되면 호출시 전달된 파라미터들은 커널에 정의된 `asmlinkage long sys_ptree(struct prinfo *buf, int *nr)`로 전달된다. 그런데 유저 메모리를 커널 메모리에서 가져와서 사용할 수는 없으므로 유저 메모리의 내용을 커널 메모리로 복사하고, 작업을 마친 뒤에는 이를 다시 유저 메모리로 복사 해주는 과정이 필요하다. 이를 위해 커널에서 제공하는 함수가 바로 `copy_from_user`와 `copy_to_user`이다. `copy_to_user` 함수는 유저 모드의 가상주소의 특정 주소 값부터 시작해서 특정 크기만큼의 데이터를 커널 가상 주소로 복사시켜주는 함수이고 `copy_to_user`는 이와 반대의 기능을 하는 함수이다.
 
-```
+```c
 if(copy_from_user(temp_nr, nr, sizeof(int)) != 0) {
     perror("copy_from_user ERROR: could not read nr struct from user");
     errno= -EFAULT;
@@ -123,8 +123,10 @@ if(copy_to_user(nr, temp_nr, sizeof(int)) != 0) {
 ### 사용자로부터 input을 받은 후 메모리 할당
 테스트 코드는 사용자로부터 프린트 할 프로세스 개수를 입력받아 실행된다. 이를 통해 여러 케이스의 테스트를 진행할 수 있다. 입력받은 숫자 만큼의 메모리를 할당하여 시스템콜을 호출한다. 이를 위해서는 <syscall.h>, <unistd.h>의 헤더가 필요하다. 
 
+```c
     struct prinfo *k=(struct prinfo *)malloc(sizeof(struct prinfo)*nr); 
     int total=syscall(398, k, &nr);
+```
 
 system call의 리턴 값은 프로세스 개수 혹은 -1이기 때문에 에러의 유무를 판단할 수 있다.
 
@@ -133,6 +135,7 @@ system call의 리턴 값이 0보다 작을 경우 경우의 수를 나누어 �
 만약 메모리의 주소가 NULL이거나 입력한 수가 1보다 작을 경우 errno를 EINVAL로 설정하여 perror을 통해 에러 메세지를 프린트했다.
 다른 경우는 메모리에 접근할 수 없는 경우이므로 errno를 EFAULT로 설정하여 perror을 통해 에러 메세지를 프린트했다. 이하는 해당 코드이다.
 
+```c
     if(total<0){
         if(k==NULL || &nr==NULL || nr<1 ){
             errno=EINVAL;
@@ -144,12 +147,15 @@ system call의 리턴 값이 0보다 작을 경우 경우의 수를 나누어 �
         }    
         return -1;
     }
+```
 
 ### Printing format and method
 성공적으로 양수의 값이 리턴되었다면 받은 값들을 프린트한다.
 프린트 포멧은 다음과 같다.
 
+```c
     printf("%s,%d,%lld,%d,%d,%d,%lld\n",k->comm, k->pid, k->state, k->parent_pid, k->first_child_pid, k->next_sibling_pid, k->uid);
+```
 
 이는 해당 프로젝트의 조건과 같다.
 
@@ -167,16 +173,17 @@ indent 조건은 다음과 같다.
 
 indent 저장을 stack 방식으로 한 이유는 항상 가장 마지막에 저장한 indent가 가장 처음으로 필요로 하는 process의 indent가 되어 LIFO를 만족하기 때문이다. 구현은 array와 하나의 index integer로 했다. 해당 코드는 다음과 같다. 
 
-      int *ind=(int*)malloc((nr+1)/2*sizeof(int));// indent stack
+```c
+      int *ind=(int*)malloc((nr+1)/2*sizeof(int));   // indent stack
       int index=-1;//stack pointer
       int tab=0;//current indent
   
-      printf("%s,%d,%lld,%d,%d,%d,%lld\n",k->comm, k->pid, k->state, k->parent_pid, k->first_child_pid, k->next_sibling_pid, k->uid);//printing format
+      printf("%s,%d,%lld,%d,%d,%d,%lld\n",k->comm, k->pid, k->state, k->parent_pid, k->first_child_pid, k->next_sibling_pid, k->uid);    //printing format
       if((k->first_child_pid!=0) && (k->next_sibling_pid!=0)){
           index++;
           ind[index]=0;
       }
-      for(int i=1;i<nr;i++){
+      for(int i=1; i<nr; i++){
           if(((k+i-1)->first_child_pid==(k+i)->pid))// case 1
               tab++;
           else if((k+i-1)->next_sibling_pid!=(k+i)->pid){//case 2
@@ -195,7 +202,7 @@ indent 저장을 stack 방식으로 한 이유는 항상 가장 마지막에 저
           printf("%s,%d,%lld,%d,%d,%d,%lld\n",(k+i)->comm, (k+i)->pid, (k+i)->state, (k+i)->parent_pid, (k+i)->first_child_pid, (k+i)->next_sibling_pid, (k+i)->uid);
   
       }
-
+```
 
 # 느낀점
 

@@ -10,7 +10,7 @@ SNUCSE operating system 2019 Project4: Geo-tagged File System
 ### 1. e2fsprogs/lib/ext2fs/ext2_fs.h
 ext2 파일 시스템을 생성해주는 `mke2fs`를 사용하기에 앞서서 ext2 inode 구조체에 gps_location 정보가 들어가도록 수정을 해야한다. `ext2_inode` 구조체에 다음 내용을 추가해준다.
 
-```
+```c
 __u32	i_lat_integer;
 __u32	i_lat_fractional;
 __u32	i_lng_integer;
@@ -29,7 +29,7 @@ __u32	i_accuracy;
 - 이는 파일 write를 할 때 호출이 되는 함수로 우리는 여기에 gps_location을 write하는 기능을 추가해야한다.
 - 아래와 같이 `file_inode` 함수를 통해 파일의 inode 정보를 얻고, `set_gps_location` 함수를 통해서 얻은 inode의 gps_location 정보를 세팅한다.
 
-```
+```c
 static ssize_t ext2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
     // get inode of the file
@@ -45,7 +45,7 @@ static ssize_t ext2_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 - 이 함수는 아래와 같이 `const struct file_operations ext2_file_operations`을 통해서 참조된다.
 
-```
+```c
 const struct file_operations ext2_file_operations = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= ext2_file_read_iter,
@@ -62,7 +62,7 @@ const struct file_operations ext2_file_operations = {
 - 그 다음으로 구현할 부분은 파일에 접근할 때마다 접근 권한을 체크하는 부분이다.
 - 아래와 같은 식으로 permission을 확인한다. 이 때 `nearby` 함수는 inode의 위치를 현재 위치와 비교해서 접근권한을 체크하는 함수인데, 이는 `kernel/gps.c`에 구현되어있다.
 
-```
+```c
 int ext2_perm(struct inode * inode, int mask){
 	int ret;
 	if((ret=generic_permission(inode, mask))!=0){
@@ -86,7 +86,7 @@ int ext2_perm(struct inode * inode, int mask){
 - 파일 생성시 inode에 gps_location 정보를 자동으로 추가하는 기능을 넣어준다.
 - `static int ext2_create (struct inode * dir, struct dentry * dentry, umode_t mode, bool excl)` 함수 내에서 다음과 같이 파일 inode에 대하여 gps_location 정보를 세팅하도록 한다.
 
-```
+```c
 if(inode->i_op->set_gps_location){
     inode->i_op->set_gps_location(inode);
 }
@@ -97,7 +97,8 @@ if(inode->i_op->set_gps_location){
 중요한 자료구조는 크게 두 가지가 있다.
 
 ### 1. gps_location
-```
+
+```c
 struct gps_location {
     int lat_integer;
     int lat_fractional;
@@ -110,7 +111,8 @@ struct gps_location {
 - `/include/linux/gps.h`에 정의되어 있으며, 기본적인 gps_location 정보들을 모두 포함한다.
 
 ### 2. gps_fixp
-```
+
+```c
 typedef struct gps_fixed_point {
     int integer;
     int fraction;

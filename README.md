@@ -51,7 +51,8 @@ the problems which may result by upgrading your kernel.
    + CFS 스케줄러 정책에 따라 SCHED_NORMAL 스케줄링 정책으로 CFS 스케줄러는 시분할 방식으로 프로세스를 관리한다.
 
 **우리가 이번에 구현할 WRR 정책의 런큐는 RT와 CFS의 사이에 존재한다.** 따라서 `rt_rq`의 next는 WRR policy가 되어야 한다.
-```
+
+```c
 // kernel/sched/rt.c
 
 const struct sched_class rt_sched_class = {
@@ -62,7 +63,8 @@ const struct sched_class rt_sched_class = {
 ## Weighted Round Robin (WRR)
 
 ### struct sched_class wrr_sched_class
-```
+
+```c
 const struct sched_class wrr_sched_class = {
 /*******************************************************************
  * enqueue_task:		Process enters the TASK_RUNNING(ready) state
@@ -123,7 +125,8 @@ const struct sched_class wrr_sched_class = {
 > 이와 같은 상태들은 task_struct의 `state` 멤버에 저장이 되는데 이 중에서 `TASK_RUNNING` 상태의 경우 실행 대기(ready) 상태와 실행 중(run) 상태를 모두 나타낸다. 따라서 이 둘을 구분하기 위해서는 `task_current` 함수 등을 통해서 `struct rq`의 `curr` 필드에 접근해서 현재 CPU를 점유하며 실행 중인 프로세스를 확인해야만 한다.
 
 ### wrr_rq
-```
+
+```c
 struct wrr_rq {
     unsigned long weight_sum;
     struct list_head run_list;
@@ -137,7 +140,8 @@ struct wrr_rq {
 
 
 ### sched_wrr_entity
-```
+
+```c
 struct sched_wrr_entity {
     struct list_head                run_list;
     unsigned long                   timeout;
@@ -145,6 +149,7 @@ struct sched_wrr_entity {
     unsigned int                    weight;
 };
 ```
+
 - WRR 런큐에 들어가는 task 각각의 entity를 정의한 구조체이다.
 - `run_list`: 우리가 구현할 WRR 런큐의 태스크들은 linked list 형태로 관리 되어야하기에 이 멤버가 존재한다.
 - `time_slice`: 각 task는 10ms * weight를 time slice로 할당받고, 해당 길이의 시간만큼 스케줄링된다.`
@@ -154,7 +159,7 @@ struct sched_wrr_entity {
 ----
 # 3. System Call
 
-```
+```c
 // kernel/sched/core.c
 
 SYSCALL_DEFINE2(sched_setweight, pid_t, pid, int, weight){
@@ -168,7 +173,7 @@ SYSCALL_DEFINE1(sched_getweight, pid_t, pid){
 
 위와 같이 시스템 콜을 정의하고 아래과 같이 함수의 기능을 구현한다.
 
-```
+```c
 // kernel/sched/core.c
 long sched_setweight(pid_t pid, int weight) {
     if (weight <= 0 || weight > 20)
